@@ -9,7 +9,7 @@ const (
 		price DECIMAL(10, 2) NOT NULL,
 		location TEXT NOT NULL,
 		rating DECIMAL(3, 2) DEFAULT 0.0,
-		url TEXT UNIQUE NOT NULL,  -- Ensures no duplicate listings
+		url TEXT UNIQUE NOT NULL, 
 		bedrooms INTEGER DEFAULT 0,
 		bathrooms INTEGER DEFAULT 0,
 		guests INTEGER DEFAULT 0,
