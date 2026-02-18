@@ -41,3 +41,15 @@ func (scrape *Scraper) createStealthContext(parentCtx context.Context) (context.
 		cancelAlloc()
 	}
 }
+
+// removeWebdriverProperty removes the webdriver property that sites check
+func removeWebdriverProperty() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		err := chromedp.Evaluate(`
+			Object.defineProperty(navigator, 'webdriver', {
+				get: () => undefined
+			})
+		`, nil).Do(ctx)
+		return err
+	})
+}
