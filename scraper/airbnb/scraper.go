@@ -2,6 +2,7 @@ package airbnb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"time"
@@ -173,4 +174,53 @@ func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing
 	scrape.logger.Info("Extracted listing data from page")
 
 	return listings, nil
+}
+
+// parseListingsJSON parses the JSON response into RawListing structs
+func (s *Scraper) parseListingsJSON(jsonStr string) []models.RawListing {
+	// Handling empty responses
+	if jsonStr == "" || jsonStr == "[]" || jsonStr == "null" {
+		return []models.RawListing{}
+	}
+
+	// structure matching the JavaScript output
+	var rawData []struct {
+		Title     string `json:"title"`
+		Price     string `json:"price"`
+		Location  string `json:"location"`
+		Rating    string `json:"rating"`
+		URL       string `json:"url"`
+		Bedrooms  int    `json:"bedrooms"`
+		Bathrooms int    `json:"bathrooms"`
+		Guests    int    `json:"guests"`
+	}
+
+	// Parse JSON
+	if err := json.Unmarshal([]byte(jsonStr), &rawData); err != nil {
+		s.logger.Error("Failed to parse JSON: %v", err)
+		return []models.RawListing{}
+	}
+
+	// Convert to RawListing structs
+	listings := make([]models.RawListing, 0, len(rawData))
+	for _, raw := range rawData {
+		// Clean the data
+		listing := models.RawListing{
+			Title:     utils.CleanText(raw.Title),
+			Price:     utils.CleanText(raw.Price),
+			Location:  utils.CleanText(raw.Location),
+			Rating:    utils.CleanText(raw.Rating),
+			URL:       raw.URL,
+			Bedrooms:  raw.Bedrooms,
+			Bathrooms: raw.Bathrooms,
+			Guests:    raw.Guests,
+		}
+
+		// Only add listings with valid data
+		if listing.Title != "" && listing.URL != "" {
+			listings = append(listings, listing)
+		}
+	}
+
+	return listings
 }
