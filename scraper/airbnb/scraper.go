@@ -167,16 +167,16 @@ func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing
 	}
 
 	// Parse JSON response
-	// var rawData []struct {
-	// 	Title     string `json:"title"`
-	// 	Price     string `json:"price"`
-	// 	Location  string `json:"location"`
-	// 	Rating    string `json:"rating"`
-	// 	URL       string `json:"url"`
-	// 	Bedrooms  int    `json:"bedrooms"`
-	// 	Bathrooms int    `json:"bathrooms"`
-	// 	Guests    int    `json:"guests"`
-	// }
+	var rawData []struct {
+		Title     string `json:"title"`
+		Price     string `json:"price"`
+		Location  string `json:"location"`
+		Rating    string `json:"rating"`
+		URL       string `json:"url"`
+		Bedrooms  int    `json:"bedrooms"`
+		Bathrooms int    `json:"bathrooms"`
+		Guests    int    `json:"guests"`
+	}
 
 	// Unmarshal
 	listings := []models.RawListing{}
