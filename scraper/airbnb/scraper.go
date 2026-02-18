@@ -120,3 +120,69 @@ func (scrape *Scraper) ScrapeListings(ctx context.Context) ([]models.RawListing,
 	scrape.logger.Success("Scraped %d listings from page", len(listings))
 	return listings, nil
 }
+
+// extractListings extracts listing data using JavaScript evaluation
+func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing, error) {
+	// JavaScript code to extract all listing data
+	// We are using data-testid and aria-label attributes
+	jsCode := `
+		JSON.stringify(
+			Array.from(document.querySelectorAll('[data-testid="card-container"]')).slice(0, 20).map(card => {
+				// Helper function to safely get text content
+				const getText = (selector) => {
+					const el = card.querySelector(selector);
+					return el ? el.innerText.trim() : '';
+				};
+
+				// Helper function to safely get attribute
+				const getAttr = (selector, attr) => {
+					const el = card.querySelector(selector);
+					return el ? el.getAttribute(attr) : '';
+				};
+
+				return {
+					title: getText('[data-testid="listing-card-title"]') || 
+					       getText('[itemprop="name"]') ||
+					       getText('div[id*="title"]'),
+					price: getText('[data-testid="price-availability-row"]') ||
+					       getText('span._tyxjp1') ||
+					       getText('span[aria-label*="price"]'),
+					location: getText('[data-testid="listing-card-subtitle"]') ||
+					         getText('span[data-testid="listing-card-name"]'),
+					rating: getAttr('[aria-label*="rating"]', 'aria-label') ||
+					       getText('span[aria-label*="rating"]'),
+					url: card.querySelector('a') ? card.querySelector('a').href : '',
+					
+					bedrooms: 0,
+					bathrooms: 0,
+					guests: 0
+				};
+			})
+		)
+	`
+
+	var listingsJSON string
+	if err := chromedp.Evaluate(jsCode, &listingsJSON).Do(ctx); err != nil {
+		return nil, fmt.Errorf("failed to evaluate JS: %w", err)
+	}
+
+	// Parse JSON response
+	// var rawData []struct {
+	// 	Title     string `json:"title"`
+	// 	Price     string `json:"price"`
+	// 	Location  string `json:"location"`
+	// 	Rating    string `json:"rating"`
+	// 	URL       string `json:"url"`
+	// 	Bedrooms  int    `json:"bedrooms"`
+	// 	Bathrooms int    `json:"bathrooms"`
+	// 	Guests    int    `json:"guests"`
+	// }
+
+	// Unmarshal
+	listings := []models.RawListing{}
+
+	//create a simple parser
+	scrape.logger.Info("Extracted listing data from page")
+
+	return listings, nil
+}
