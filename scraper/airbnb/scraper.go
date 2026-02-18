@@ -2,6 +2,8 @@ package airbnb
 
 import (
 	"context"
+	"math/rand"
+	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/farhanasfar/airbnb-market-scraping-system/config"
@@ -51,5 +53,18 @@ func removeWebdriverProperty() chromedp.Action {
 			})
 		`, nil).Do(ctx)
 		return err
+	})
+}
+
+// randomDelay adding human-like random delay
+func (scrape *Scraper) randomDelay() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		minMs := scrape.cfg.DelayMinMs
+		maxMs := scrape.cfg.DelayMaxMs
+		delay := time.Duration(minMs+rand.Intn(maxMs-minMs)) * time.Millisecond
+
+		scrape.logger.Info("Waiting %v before next action...", delay)
+		time.Sleep(delay)
+		return nil
 	})
 }
