@@ -166,20 +166,8 @@ func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing
 		return nil, fmt.Errorf("failed to evaluate JS: %w", err)
 	}
 
-	// Parse JSON response
-	var rawData []struct {
-		Title     string `json:"title"`
-		Price     string `json:"price"`
-		Location  string `json:"location"`
-		Rating    string `json:"rating"`
-		URL       string `json:"url"`
-		Bedrooms  int    `json:"bedrooms"`
-		Bathrooms int    `json:"bathrooms"`
-		Guests    int    `json:"guests"`
-	}
-
-	// Unmarshal
-	listings := []models.RawListing{}
+	// Convert JSON string to RawListing structs
+	listings := scrape.parseListingsJSON(listingsJSON)
 
 	//create a simple parser
 	scrape.logger.Info("Extracted listing data from page")
