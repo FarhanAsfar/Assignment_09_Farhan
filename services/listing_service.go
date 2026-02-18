@@ -69,7 +69,7 @@ func (s *ListingService) normalize(raw models.RawListing) models.Listing {
 		Price:     utils.NormalizePrice(raw.Price), // "$120" -> 120.0
 		Location:  raw.Location,
 		Rating:    utils.NormalizeRating(raw.Rating), // "4.95 (123)" -> 4.95
-		URL:       raw.URL,
+		URL:       utils.NormalizeURL(raw.URL),       //removing query params as it keeps changing and duplicate data gets added.
 		Bedrooms:  raw.Bedrooms,
 		Bathrooms: raw.Bathrooms,
 		Guests:    raw.Guests,
