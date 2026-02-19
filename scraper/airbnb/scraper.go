@@ -171,7 +171,7 @@ func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing
 	listings := scrape.parseListingsJSON(listingsJSON)
 
 	//create a simple parser
-	scrape.logger.Info("Extracted listing data from page")
+	scrape.logger.Info("Extracted %d listing data from page", len(listings))
 
 	return listings, nil
 }
