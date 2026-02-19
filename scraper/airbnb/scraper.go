@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -28,14 +27,13 @@ func NewScraper(cfg *config.ScraperConfig, logger *utils.Logger) *Scraper {
 }
 
 // createStealthContext creates a browser context with anti-detection settings
-func (scrape *Scraper) createStealthContext(parentCtx context.Context) (context.Context, context.CancelFunc) {
+func (s *Scraper) createStealthContext(parentCtx context.Context) (context.Context, context.CancelFunc) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		// avoiding bot detection
-		chromedp.Flag("headless", scrape.cfg.Headless),
+		chromedp.Flag("headless", s.cfg.Headless),
 		chromedp.WindowSize(1440, 900),
 		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
-		chromedp.Flag("blink-settings", "imagesEnabled=false"), //not loading images to scrape fast.
+		chromedp.Flag("blink-settings", "imagesEnabled=false"),
 	)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parentCtx, opts...)
@@ -59,118 +57,123 @@ func removeWebdriverProperty() chromedp.Action {
 	})
 }
 
-// randomDelay adding human-like random delay
-func (scrape *Scraper) randomDelay() chromedp.Action {
-	return chromedp.ActionFunc(func(ctx context.Context) error {
-		minMs := scrape.cfg.DelayMinMs
-		maxMs := scrape.cfg.DelayMaxMs
-		delay := time.Duration(minMs+rand.Intn(maxMs-minMs)) * time.Millisecond
-
-		scrape.logger.Info("Waiting %v before next action...", delay)
-		time.Sleep(delay)
-		return nil
-	})
-}
-
-// ScrapeListings scrapes listings from Airbnb search results
-func (scrape *Scraper) ScrapeListings(ctx context.Context) ([]models.RawListing, error) {
-	// Create stealth browser context
-	browserCtx, cancel := scrape.createStealthContext(ctx)
+// ScrapeListings scrapes listings from Airbnb search results with pagination
+func (s *Scraper) ScrapeListings(ctx context.Context) ([]models.RawListing, error) {
+	browserCtx, cancel := s.createStealthContext(ctx)
 	defer cancel()
 
-	// Add timeout
-	browserCtx, cancel = context.WithTimeout(browserCtx, time.Duration(scrape.cfg.TimeoutSeconds)*time.Second)
-	defer cancel()
+	s.logger.Info("Starting Airbnb scraper...")
+	s.logger.Info("Target URL: %s", s.cfg.URL)
+	s.logger.Info("Max pages: %d", s.cfg.MaxPages)
 
-	scrape.logger.Info("Starting Airbnb scraper...")
-	scrape.logger.Info("Target URL: %s", scrape.cfg.URL)
-	scrape.logger.Info("Max Pages: %d", scrape.cfg.MaxPages)
+	allListings := []models.RawListing{}
 
-	var allListings []models.RawListing
-
-	//Navigate to first page
+	// Navigate to first page AND extract on first page - ALL IN ONE RUN
 	err := chromedp.Run(browserCtx,
-		// Remove webdriver property
 		removeWebdriverProperty(),
-
-		// Navigate to search page
-		chromedp.Navigate(scrape.cfg.URL),
-
-		// Waiting for listing cards to appear
-		// Using data-testid attribute
+		chromedp.Navigate(s.cfg.URL),
 		chromedp.WaitVisible(`[data-testid="card-container"]`, chromedp.ByQuery),
-
-		// Add delay to let page fully render
-		scrape.randomDelay(),
+		chromedp.Sleep(3*time.Second),
 	)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to load first page: %w", err)
 	}
 
-	//scrape multiple pages
-	for page := 1; page <= scrape.cfg.MaxPages; page++ {
-		scrape.logger.Info("Scraping page %d/%d...", page, scrape.cfg.MaxPages)
+	// Scrape multiple pages
+	for page := 1; page <= s.cfg.MaxPages; page++ {
+		s.logger.Info("Scraping page %d/%d...", page, s.cfg.MaxPages)
 
-		// Scroll to trigger lazy loading
-		chromedp.Run(browserCtx,
-			chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight / 2)`, nil),
-			scrape.randomDelay(),
-			chromedp.Evaluate(`window.scrollTo(0, 0)`, nil),
+		// EXTRACT INSIDE A SINGLE chromedp.Run WITH THE EVALUATION
+		var listingsJSON string
+		err := chromedp.Run(browserCtx,
+			chromedp.Sleep(2*time.Second),
+			chromedp.Evaluate(`
+				JSON.stringify(
+					Array.from(document.querySelectorAll('[data-testid="card-container"]')).slice(0, 20).map(card => {
+						const getText = (selector) => {
+							const el = card.querySelector(selector);
+							return el ? el.innerText.trim() : '';
+						};
+						const getAttr = (selector, attr) => {
+							const el = card.querySelector(selector);
+							return el ? el.getAttribute(attr) : '';
+						};
+						return {
+							title: getText('[data-testid="listing-card-title"]') || 
+							       getText('[itemprop="name"]') ||
+							       getText('div[id*="title"]'),
+							price: getText('[data-testid="price-availability-row"]') ||
+							       getText('span._tyxjp1') ||
+							       getText('span[aria-label*="price"]'),
+							location: getText('[data-testid="listing-card-subtitle"]') ||
+							         getText('span[data-testid="listing-card-name"]'),
+							rating: getAttr('[aria-label*="rating"]', 'aria-label') ||
+							       getText('span[aria-label*="rating"]'),
+							url: card.querySelector('a') ? card.querySelector('a').href : '',
+							bedrooms: 0,
+							bathrooms: 0,
+							guests: 0
+						};
+					})
+				)
+			`, &listingsJSON),
 		)
 
-		// Extract listings from current page
-		listings, err := scrape.extractListings(browserCtx)
 		if err != nil {
-			scrape.logger.Error("Failed to extract listings from page %d: %v", page, err)
+			s.logger.Error("Failed to extract listings from page %d: %v", page, err)
 			continue
 		}
 
-		scrape.logger.Success("Scraped %d listings from page %d", len(listings), page)
+		listings := s.parseListingsJSON(listingsJSON)
+		s.logger.Success("Scraped %d listings from page %d", len(listings), page)
 		allListings = append(allListings, listings...)
 
-		// If not the last page, click "Next" button
-		if page < scrape.cfg.MaxPages {
-			hasNext, err := scrape.goToNextPage(browserCtx)
+		// Navigate to next page if not last
+		if page < s.cfg.MaxPages {
+			time.Sleep(3 * time.Second)
+
+			hasNext, err := s.goToNextPage(browserCtx)
 			if err != nil {
-				scrape.logger.Error("Failed to navigate to next page: %v", err)
+				s.logger.Error("Failed to navigate to next page: %v", err)
 				break
 			}
 
 			if !hasNext {
-				scrape.logger.Info("No more pages available, stopping at page %d", page)
+				s.logger.Info("No more pages available")
 				break
 			}
 
-			// Wait for new page to load
-			chromedp.Run(browserCtx,
+			// Wait for new page
+			err = chromedp.Run(browserCtx,
+				chromedp.Sleep(3*time.Second),
 				chromedp.WaitVisible(`[data-testid="card-container"]`, chromedp.ByQuery),
-				scrape.randomDelay(),
 			)
-		}
 
+			if err != nil {
+				s.logger.Error("Wait failed: %v", err)
+				break
+			}
+		}
 	}
-	scrape.logger.Success("Scraped %d listings from page", len(allListings))
+
+	s.logger.Success("Total listings scraped: %d", len(allListings))
 	return allListings, nil
 }
 
-// goToNextPage clicks the "Next" pagination button
-func (scrape *Scraper) goToNextPage(ctx context.Context) (bool, error) {
-	scrape.logger.Info("Looking for 'Next' button...")
+// goToNextPage clicks the pagination next button
+func (s *Scraper) goToNextPage(ctx context.Context) (bool, error) {
+	s.logger.Info("Looking for 'Next' button...")
 
-	// Check if next button exists and is clickable
 	var nextButtonExists bool
-	err := chromedp.Run(ctx,
-		chromedp.Evaluate(`
-			(() => {
-				// Try multiple selectors for the next button
-				const nextButton = document.querySelector('a[aria-label="Next"]') ||
-				                   document.querySelector('a[aria-label*="next"]') ||
-				                   document.querySelector('nav a:last-child');
-				return nextButton && !nextButton.getAttribute('aria-disabled');
-			})()
-		`, &nextButtonExists),
-	)
+	err := chromedp.Evaluate(`
+		(() => {
+			const nextButton = document.querySelector('a[aria-label="Next"]') ||
+			                   document.querySelector('a[aria-label*="next"]') ||
+			                   document.querySelector('nav a:last-child');
+			return nextButton && !nextButton.getAttribute('aria-disabled');
+		})()
+	`, &nextButtonExists).Do(ctx)
 
 	if err != nil {
 		return false, fmt.Errorf("failed to check for next button: %w", err)
@@ -180,41 +183,85 @@ func (scrape *Scraper) goToNextPage(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	// Click the next button
-	err = chromedp.Run(ctx,
-		chromedp.Click(`a[aria-label="Next"]`, chromedp.ByQuery),
-		scrape.randomDelay(),
-	)
-
+	// Click next button
+	err = chromedp.Click(`a[aria-label="Next"]`, chromedp.ByQuery).Do(ctx)
 	if err != nil {
-		// Try alternative selector
-		err = chromedp.Run(ctx,
-			chromedp.Click(`nav a:last-child`, chromedp.ByQuery),
-			scrape.randomDelay(),
-		)
+		// Try alternative
+		err = chromedp.Click(`nav a:last-child`, chromedp.ByQuery).Do(ctx)
 		if err != nil {
 			return false, fmt.Errorf("failed to click next button: %w", err)
 		}
 	}
 
-	scrape.logger.Success("Navigated to next page")
+	s.logger.Success("Navigated to next page")
 	return true, nil
 }
 
-// extractListings extracts listing data using JavaScript evaluation
-func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing, error) {
-	// JavaScript code to extract all listing data
-	// We are using data-testid and aria-label attributes
+// // extractListings extracts listing data using JavaScript
+// func (s *Scraper) extractListings(ctx context.Context) ([]models.RawListing, error) {
+// 	jsCode := `
+// 		JSON.stringify(
+// 			Array.from(document.querySelectorAll('[data-testid="card-container"]')).slice(0, 20).map(card => {
+// 				const getText = (selector) => {
+// 					const el = card.querySelector(selector);
+// 					return el ? el.innerText.trim() : '';
+// 				};
+
+// 				const getAttr = (selector, attr) => {
+// 					const el = card.querySelector(selector);
+// 					return el ? el.getAttribute(attr) : '';
+// 				};
+
+// 				return {
+// 					title: getText('[data-testid="listing-card-title"]') ||
+// 					       getText('[itemprop="name"]') ||
+// 					       getText('div[id*="title"]'),
+// 					price: getText('[data-testid="price-availability-row"]') ||
+// 					       getText('span._tyxjp1') ||
+// 					       getText('span[aria-label*="price"]'),
+// 					location: getText('[data-testid="listing-card-subtitle"]') ||
+// 					         getText('span[data-testid="listing-card-name"]'),
+// 					rating: getAttr('[aria-label*="rating"]', 'aria-label') ||
+// 					       getText('span[aria-label*="rating"]'),
+// 					url: card.querySelector('a') ? card.querySelector('a').href : '',
+// 					bedrooms: 0,
+// 					bathrooms: 0,
+// 					guests: 0
+// 				};
+// 			})
+// 		)
+// 	`
+
+// 	var listingsJSON string
+// 	err := chromedp.Evaluate(jsCode, &listingsJSON).Do(ctx)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to evaluate JS: %w", err)
+// 	}
+
+// 	listings := s.parseListingsJSON(listingsJSON)
+// 	s.logger.Info("Extracted %d listings from page", len(listings))
+
+// 	return listings, nil
+// }
+
+func (s *Scraper) extractListings(ctx context.Context) ([]models.RawListing, error) {
+	// CHECK 1: Is context valid?
+	s.logger.Info("DEBUG: Checking context before extraction...")
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("context already cancelled before extraction: %v", ctx.Err())
+	default:
+		s.logger.Info("DEBUG: Context is valid, proceeding...")
+	}
+
 	jsCode := `
 		JSON.stringify(
 			Array.from(document.querySelectorAll('[data-testid="card-container"]')).slice(0, 20).map(card => {
-				// Helper function to safely get text content
 				const getText = (selector) => {
 					const el = card.querySelector(selector);
 					return el ? el.innerText.trim() : '';
 				};
 
-				// Helper function to safely get attribute
 				const getAttr = (selector, attr) => {
 					const el = card.querySelector(selector);
 					return el ? el.getAttribute(attr) : '';
@@ -232,7 +279,6 @@ func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing
 					rating: getAttr('[aria-label*="rating"]', 'aria-label') ||
 					       getText('span[aria-label*="rating"]'),
 					url: card.querySelector('a') ? card.querySelector('a').href : '',
-					
 					bedrooms: 0,
 					bathrooms: 0,
 					guests: 0
@@ -241,28 +287,28 @@ func (scrape *Scraper) extractListings(ctx context.Context) ([]models.RawListing
 		)
 	`
 
+	s.logger.Info("DEBUG: About to call chromedp.Evaluate...")
 	var listingsJSON string
-	if err := chromedp.Evaluate(jsCode, &listingsJSON).Do(ctx); err != nil {
+	err := chromedp.Evaluate(jsCode, &listingsJSON).Do(ctx)
+	if err != nil {
+		s.logger.Error("DEBUG: chromedp.Evaluate failed with: %v", err)
+		s.logger.Error("DEBUG: Context error (if any): %v", ctx.Err())
 		return nil, fmt.Errorf("failed to evaluate JS: %w", err)
 	}
 
-	// Convert JSON string to RawListing structs
-	listings := scrape.parseListingsJSON(listingsJSON)
-
-	//create a simple parser
-	scrape.logger.Info("Extracted %d listing data from page", len(listings))
+	s.logger.Info("DEBUG: Evaluation succeeded, got JSON length: %d", len(listingsJSON))
+	listings := s.parseListingsJSON(listingsJSON)
+	s.logger.Info("Extracted %d listings from page", len(listings))
 
 	return listings, nil
 }
 
-// parseListingsJSON parses the JSON response into RawListing structs
+// parseListingsJSON parses JSON into RawListing structs
 func (s *Scraper) parseListingsJSON(jsonStr string) []models.RawListing {
-	// Handling empty responses
 	if jsonStr == "" || jsonStr == "[]" || jsonStr == "null" {
 		return []models.RawListing{}
 	}
 
-	// structure matching the JavaScript output
 	var rawData []struct {
 		Title     string `json:"title"`
 		Price     string `json:"price"`
@@ -274,16 +320,13 @@ func (s *Scraper) parseListingsJSON(jsonStr string) []models.RawListing {
 		Guests    int    `json:"guests"`
 	}
 
-	// Parse JSON
 	if err := json.Unmarshal([]byte(jsonStr), &rawData); err != nil {
 		s.logger.Error("Failed to parse JSON: %v", err)
 		return []models.RawListing{}
 	}
 
-	// Convert to RawListing structs
 	listings := make([]models.RawListing, 0, len(rawData))
 	for _, raw := range rawData {
-		// Clean the data
 		listing := models.RawListing{
 			Title:     utils.CleanText(raw.Title),
 			Price:     utils.CleanText(raw.Price),
@@ -295,7 +338,6 @@ func (s *Scraper) parseListingsJSON(jsonStr string) []models.RawListing {
 			Guests:    raw.Guests,
 		}
 
-		// Only add listings with valid data
 		if listing.Title != "" && listing.URL != "" {
 			listings = append(listings, listing)
 		}
