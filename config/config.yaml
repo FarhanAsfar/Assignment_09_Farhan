@@ -16,11 +16,11 @@ scraper:
   delay_max_ms: 9000  # 5 seconds maximum
   
   # Retry config
-  max_retries: 0
+  max_retries: 2
   retry_delay_ms: 3000
   
   # Browser settings
-  headless: false  
+  headless: false 
   timeout_seconds: 120
 
 # Database configuration
