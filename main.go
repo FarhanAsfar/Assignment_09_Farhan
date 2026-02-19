@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/farhanasfar/airbnb-market-scraping-system/config"
+	"github.com/farhanasfar/airbnb-market-scraping-system/models"
 	"github.com/farhanasfar/airbnb-market-scraping-system/scraper/airbnb"
 	"github.com/farhanasfar/airbnb-market-scraping-system/services"
 	"github.com/farhanasfar/airbnb-market-scraping-system/storage"
@@ -14,9 +15,8 @@ import (
 )
 
 func main() {
-	// Initialize logger
 	logger := utils.NewLogger()
-	logger.Info("Starting Airbnb Scraper...")
+	logger.Info("Starting Airbnb Multi-Location Scraper...")
 
 	// Load configuration
 	cfg, err := config.Load("config/config.yaml")
@@ -34,66 +34,103 @@ func main() {
 
 	// Create services
 	listingService := services.NewListingService(db, logger)
-
-	// Create scraper instance
 	scraper := airbnb.NewScraper(&cfg.Scraper, logger)
-
-	// Scrape listings
-	logger.Info("Starting scraping process...")
 	ctx := context.Background()
-	rawListings, err := scraper.ScrapeListings(ctx)
+
+	// Step 1: Scrape homepage to get location URLs
+	logger.Info("\n=== STEP 1: EXTRACTING LOCATIONS FROM HOMEPAGE ===")
+	locations, err := scraper.ScrapeHomepageLocations(ctx)
 	if err != nil {
-		log.Fatal("Scraping failed:", err)
+		log.Fatal("Failed to scrape homepage:", err)
 	}
 
-	if len(rawListings) == 0 {
-		logger.Warning("No listings found. This might mean:")
-		logger.Warning("  1. Airbnb changed their HTML structure")
-		logger.Warning("  2. The page didn't load properly")
-		logger.Warning("  3. Bot detection blocked the request")
-		logger.Info("Try setting headless=false in config to see what's happening")
+	if len(locations) == 0 {
+		logger.Warning("No locations found on homepage")
 		return
 	}
 
-	logger.Success("Scraping completed! Found %d listings", len(rawListings))
+	logger.Info("Found %d locations:", len(locations))
+	for i, loc := range locations {
+		logger.Info("  %d. %s", i+1, loc.Name)
+	}
 
-	// Print raw listings as JSON
+	// Step 2: Scrape properties from each location
+	logger.Info("\n=== STEP 2: SCRAPING PROPERTIES FROM EACH LOCATION ===")
+
+	allRawListings := []models.RawListing{}
+	totalProperties := 0
+
+	for i, location := range locations {
+		logger.Info("\n[%d/%d] Scraping: %s", i+1, len(locations), location.Name)
+		logger.Info("URL: %s", location.URL)
+
+		// Scrape this location (2 pages × 5 properties = 10 per location)
+		rawListings, err := scraper.ScrapeListings(ctx, location.URL)
+		if err != nil {
+			logger.Error("Failed to scrape %s: %v", location.Name, err)
+			continue
+		}
+
+		if len(rawListings) == 0 {
+			logger.Warning("No listings found for %s", location.Name)
+			continue
+		}
+
+		logger.Success("Got %d properties from %s", len(rawListings), location.Name)
+		allRawListings = append(allRawListings, rawListings...)
+		totalProperties += len(rawListings)
+	}
+
+	logger.Success("\n=== SCRAPED %d TOTAL PROPERTIES FROM %d LOCATIONS ===",
+		totalProperties, len(locations))
+
+	if totalProperties == 0 {
+		logger.Warning("No properties scraped, exiting")
+		return
+	}
+
+	// Print summary by location if JSON console enabled
 	if cfg.Output.JSONConsole {
-		logger.Info("\n=== RAW LISTINGS (JSON) ===")
-		jsonData, _ := json.MarshalIndent(rawListings, "", "  ")
+		logger.Info("\n=== RAW LISTINGS SUMMARY ===")
+		jsonData, _ := json.MarshalIndent(allRawListings, "", "  ")
 		fmt.Println(string(jsonData))
 	}
 
-	// Extract URLs for detail page scraping
-	logger.Info("\n=== SCRAPING DETAIL PAGES ===")
-	urls := make([]string, 0, len(rawListings))
-	for _, listing := range rawListings {
+	// Step 3: Scrape detail pages for bedrooms/bathrooms/guests
+	logger.Info("\n=== STEP 3: SCRAPING DETAIL PAGES ===")
+	urls := make([]string, 0, len(allRawListings))
+	for _, listing := range allRawListings {
 		if listing.URL != "" {
-			urls = append(urls, listing.URL)
+			normalizedURL := utils.NormalizeURL(listing.URL)
+			urls = append(urls, normalizedURL)
 		}
 	}
 
-	// Scrape detail pages with worker pool
+	logger.Info("Scraping details for %d properties...", len(urls))
 	detailResults := scraper.ScrapeDetailsWithWorkers(ctx, urls)
 
-	// Merge detail data with raw listings
-	for i := range rawListings {
-		if detail, ok := detailResults[rawListings[i].URL]; ok && detail.Error == nil {
-			rawListings[i].Bedrooms = detail.Bedrooms
-			rawListings[i].Bathrooms = detail.Bathrooms
-			rawListings[i].Guests = detail.Guests
+	// Merge detail data
+	for i := range allRawListings {
+		normalizedURL := utils.NormalizeURL(allRawListings[i].URL)
+		if detail, ok := detailResults[normalizedURL]; ok && detail.Error == nil {
+			allRawListings[i].Bedrooms = detail.Bedrooms
+			allRawListings[i].Bathrooms = detail.Bathrooms
+			allRawListings[i].Guests = detail.Guests
 		}
 	}
 
-	// Normalize and save to database
-	logger.Info("\n=== SAVING TO DATABASE ===")
-	savedCount, err := listingService.NormalizeAndSave(rawListings)
+	// Step 4: Save to database
+	logger.Info("\n=== STEP 4: SAVING TO DATABASE ===")
+	savedCount, err := listingService.NormalizeAndSave(allRawListings)
 	if err != nil {
 		logger.Error("Failed to save listings: %v", err)
 	}
 
+	// Final summary
 	logger.Success("\n=== SCRAPING COMPLETE ===")
-	logger.Info("Total listings found: %d", len(rawListings))
+	logger.Info("Locations scraped: %d", len(locations))
+	logger.Info("Total properties found: %d", totalProperties)
 	logger.Info("Successfully saved: %d", savedCount)
-	logger.Info("Duplicates/errors: %d", len(rawListings)-savedCount)
+	logger.Info("Duplicates/errors: %d", totalProperties-savedCount)
+	logger.Info("\nAverage properties per location: %.1f", float64(totalProperties)/float64(len(locations)))
 }
