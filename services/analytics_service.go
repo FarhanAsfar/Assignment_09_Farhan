@@ -145,7 +145,7 @@ func (s *AnalyticsService) PrintAnalytics(analytics *Analytics) {
 			listing.Rating, listing.Price, listing.Location)
 	}
 
-	s.logger.Info("\n" + strings.Repeat("═", 60) + "\n")
+	s.logger.Info("%s", "\n"+strings.Repeat("═", 60)+"\n")
 }
 
 // PrintAveragePrice prints only average price
