@@ -102,13 +102,13 @@ func (s *Scraper) ScrapeListings(ctx context.Context, locationURL string) ([]mod
 							return el ? el.getAttribute(attr) : '';
 						};
 						return {
-							title: getText('[data-testid="listing-card-title"]') || 
+							title: getText('[data-testid="listing-card-subtitle"]') || 
 							       getText('[itemprop="name"]') ||
 							       getText('div[id*="title"]'),
 							price: getText('[data-testid="price-availability-row"]') ||
 							       getText('span._tyxjp1') ||
 							       getText('span[aria-label*="price"]'),
-							location: getText('[data-testid="listing-card-subtitle"]') ||
+							location: getText('[data-testid="listing-card-title"]') ||
 							         getText('span[data-testid="listing-card-name"]'),
 							rating: getAttr('[aria-label*="rating"]', 'aria-label') ||
 							       getText('span[aria-label*="rating"]'),
@@ -142,7 +142,6 @@ func (s *Scraper) ScrapeListings(ctx context.Context, locationURL string) ([]mod
 		if page < s.cfg.MaxPages {
 			time.Sleep(2 * time.Second)
 
-			// Check for next button and click - ALL IN ONE chromedp.Run
 			var hasNext bool
 			s.logger.Info("Looking for 'Next' button...")
 
