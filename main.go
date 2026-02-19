@@ -64,6 +64,15 @@ func main() {
 		fmt.Println(string(jsonData))
 	}
 
+	// Extract URLs for detail page scraping
+	logger.Info("\n=== SCRAPING DETAIL PAGES ===")
+	urls := make([]string, 0, len(rawListings))
+	for _, listing := range rawListings {
+		if listing.URL != "" {
+			urls = append(urls, listing.URL)
+		}
+	}
+
 	// Normalize and save to database
 	logger.Info("\n=== SAVING TO DATABASE ===")
 	savedCount, err := listingService.NormalizeAndSave(rawListings)
