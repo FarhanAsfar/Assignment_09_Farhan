@@ -1,0 +1,38 @@
+scraper:
+  # Target URL 
+  base_url: "https://www.airbnb.com"
+  
+  # Maximum pages to scrape 
+  max_pages: 1
+  
+  # Number of concurrent workers for detail page scraping
+  max_workers: 3
+
+  # Properties to scrape per location
+  properties_per_page: 1
+  
+  # Random delay range (milliseconds) 
+  delay_min_ms: 3000  # 3 seconds minimum
+  delay_max_ms: 9000  # 5 seconds maximum
+  
+  # Retry config
+  max_retries: 0
+  retry_delay_ms: 3000
+  
+  # Browser settings
+  headless: false  
+  timeout_seconds: 120
+
+# Database configuration
+database:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  password: "postgres"
+  dbname: "airbnb_scraper"
+  sslmode: "disable"
+
+# Output settings
+output:
+  csv_file: "listings.csv"
+  json_console: true
