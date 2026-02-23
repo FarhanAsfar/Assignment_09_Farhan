@@ -33,6 +33,8 @@ cd Airbnb-Market-Scraping-System
 ```
 You should see the project running.
 
+> If you want to see the GUI, Change `headless = false` in config.yaml file
+
 ---
 
 ## Prerequisites
@@ -529,6 +531,7 @@ browserCtx, cancel = context.WithTimeout(browserCtx, 90*time.Second)
 ---
 
 Remember: Use responsibly and ethically. This tool is for educational and personal use only.
+
 
 
 
