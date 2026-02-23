@@ -35,6 +35,31 @@ You should see the project running.
 
 > If you want to see the GUI, Change `headless = false` in config.yaml file
 
+**Specific statistics:**
+
+```bash
+# Average price only
+go run main.go --avg-price
+
+# Most expensive property
+go run main.go --max-price
+
+# Top 5 rated properties
+go run main.go --top-rated
+
+# Listings grouped by location
+go run main.go --by-location
+```
+
+### Export Commands
+
+```bash
+# Export current database to CSV
+go run main.go --export-csv
+
+# Output: listings.csv
+```
+
 ---
 
 ## Prerequisites
@@ -531,6 +556,7 @@ browserCtx, cancel = context.WithTimeout(browserCtx, 90*time.Second)
 ---
 
 Remember: Use responsibly and ethically. This tool is for educational and personal use only.
+
 
 
 
