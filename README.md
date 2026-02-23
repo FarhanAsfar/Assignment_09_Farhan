@@ -25,7 +25,7 @@ A web scraper for Airbnb listings built with Go and chromedp. Automatically scra
 **Clone and Nvaigate to the Project**
 ```bash
 git clone <project-url>
-cd Airbnb-Market-Scraping-System
+cd <project-directory>
 ```
 **Now Run the following command in you terminal**
 ```bash
@@ -556,6 +556,7 @@ browserCtx, cancel = context.WithTimeout(browserCtx, 90*time.Second)
 ---
 
 Remember: Use responsibly and ethically. This tool is for educational and personal use only.
+
 
 
 
